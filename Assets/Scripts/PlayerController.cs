@@ -95,7 +95,7 @@ public class PlayerController : MonoBehaviour
 
         if (currentPosition != lastPosition || currentRotation != lastRotation)
         {
-            string message = $"update|{networkManager.websocket.GetHashCode()}|{currentPosition.x}|{currentPosition.y}|{currentPosition.z}|{currentRotation.x}|{currentRotation.y}|{currentRotation.z}`";
+            string message = $"update|{networkManager.websocket.GetHashCode()}|{currentPosition.x}|{currentPosition.y}|{currentPosition.z}|{currentRotation.x}|{currentRotation.y}|{currentRotation.z}";
             networkManager.SendMessage(message);
 
             // Update the last known position and rotation
@@ -106,12 +106,29 @@ public class PlayerController : MonoBehaviour
 
     public void Shoot()
     {
+        // Instantiate the bullet locally for the shooting player
         GameObject bullet = Instantiate(gunPrefab, gunSpawnPoint.position, gunSpawnPoint.rotation);
         Rigidbody rb = bullet.GetComponent<Rigidbody>();
         rb.AddForce(gunSpawnPoint.forward * 20f, ForceMode.Impulse);
 
-        // Notify server about shooting
-        string message = $"shoot|{networkManager.websocket.GetHashCode()}|{gunSpawnPoint.position.x}|{gunSpawnPoint.position.y}|{gunSpawnPoint.position.z}";
+        // Assign the player's ID to the bullet
+        Bullet bulletScript = bullet.GetComponent<Bullet>();
+        bulletScript.ownerId = networkManager.websocket.GetHashCode().ToString();
+
+        // Destroy the bullet after 5 seconds
+        Destroy(bullet, 5f);
+
+        // Notify the server about the shooting event
+        string message = $"shoot|{networkManager.websocket.GetHashCode()}|{gunSpawnPoint.position.x}|{gunSpawnPoint.position.y}|{gunSpawnPoint.position.z}|{gunSpawnPoint.rotation.x}|{gunSpawnPoint.rotation.y}|{gunSpawnPoint.rotation.z}|{gunSpawnPoint.rotation.w}";
         networkManager.SendMessage(message);
+    }
+
+    private void OnDestroy()
+    {
+        if (networkManager != null && networkManager.websocket != null)
+        {
+            string disconnectMessage = $"disconnect|{networkManager.websocket.GetHashCode()}";
+            networkManager.SendMessage(disconnectMessage);
+        }
     }
 }

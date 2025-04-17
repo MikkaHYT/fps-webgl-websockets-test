@@ -9,7 +9,7 @@ public class WebSocketClient : MonoBehaviour
 
     private async void Start()
     {
-        webSocket = new WebSocket("ws://yourserveraddress:port");
+        webSocket = new WebSocket("ws://ws.814850.xyz");
 
         await webSocket.Connect();
         Debug.Log("WebSocket connected!");
