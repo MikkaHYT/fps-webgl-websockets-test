@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Text;
+using System.Collections;
 
 public class PlayerController : MonoBehaviour
 {
@@ -8,17 +9,25 @@ public class PlayerController : MonoBehaviour
     public float lookSpeed = 2f;
     public GameObject gunPrefab;
     public Transform gunSpawnPoint;
-    public GameObject menuUI;
+
+    public Transform grapplePoint;
+    public float grappleSpeed = 10f;
+    public LineRenderer grappleLine; // Reference to the LineRenderer
     private CharacterController characterController;
     private Vector3 velocity;
     private bool isGrounded;
     private float rotationX = 0f;
-    private bool isMenuOpen = false;
     private NetworkManager networkManager;
 
     // Store the last known position and rotation
     private Vector3 lastPosition;
     private Vector3 lastRotation;
+
+    private bool isGrappling = false;
+
+    private float grappleCooldown = 2f;
+    private float lastGrappleTime = -Mathf.Infinity;
+
 
     void Start()
     {
@@ -34,21 +43,34 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        // Handle menu toggle
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            isMenuOpen = !isMenuOpen;
-            menuUI.SetActive(isMenuOpen);
-            Cursor.lockState = isMenuOpen ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = isMenuOpen;
-        }
-
-        if (isMenuOpen)
-        {
-            return; // Stop player movement and actions when menu is open
-        }
+        
 
         // Check if the player is grounded
+        if (isGrappling)
+        {
+            Vector3 currentPositionn = transform.position;
+            Vector3 currentRotationn = transform.eulerAngles;
+            string message = $"update|{networkManager.websocket.GetHashCode()}|{currentPositionn.x}|{currentPositionn.y}|{currentPositionn.z}|{currentRotationn.x}|{currentRotationn.y}|{currentRotationn.z}";
+            networkManager.SendMessage(message);
+            // Handle mouse look
+            float tmouseX = Input.GetAxis("Mouse X") * lookSpeed;
+            float tmouseY = Input.GetAxis("Mouse Y") * lookSpeed;
+
+            rotationX -= tmouseY;
+            rotationX = Mathf.Clamp(rotationX, -90f, 90f);
+
+            Camera.main.transform.localRotation = Quaternion.Euler(rotationX, 0f, 0f);
+            transform.Rotate(Vector3.up * tmouseX);
+
+            // Handle shooting
+            if (Input.GetButtonDown("Fire1"))
+            {
+                Shoot();
+            }
+            
+            return; // Disable grounded checks and movement while grappling
+        }
+
         isGrounded = characterController.isGrounded;
 
         if (isGrounded && velocity.y < 0)
@@ -89,6 +111,9 @@ public class PlayerController : MonoBehaviour
             Shoot();
         }
 
+        // Handle grappling
+        Grapple();
+
         // Send player position and rotation to the server only if they have changed
         Vector3 currentPosition = transform.position;
         Vector3 currentRotation = transform.eulerAngles;
@@ -102,6 +127,54 @@ public class PlayerController : MonoBehaviour
             lastPosition = currentPosition;
             lastRotation = currentRotation;
         }
+    }
+
+    void Grapple()
+    {
+        if (Input.GetKeyDown(KeyCode.E) && !isGrappling && Time.time >= lastGrappleTime + grappleCooldown)
+        {
+            RaycastHit hit;
+            if (Physics.Raycast(Camera.main.transform.position, Camera.main.transform.forward, out hit, 50f))
+            {
+                grapplePoint.position = hit.point;
+                StartCoroutine(GrappleToPoint(hit.point));
+                lastGrappleTime = Time.time; // Update the last grapple time
+
+                // Enable the LineRenderer and set its start and end points
+                grappleLine.enabled = true;
+                grappleLine.SetPosition(0, gunSpawnPoint.position); // Start point (player)
+                grappleLine.SetPosition(1, hit.point); // End point (grapple point)
+            }
+        }
+    }
+
+    IEnumerator GrappleToPoint(Vector3 point)
+    {
+        isGrappling = true; // Start grappling
+
+        float grappleProgress = 0f;
+        while (grappleProgress < 1f)
+        {
+            grappleProgress += grappleSpeed * Time.deltaTime / Vector3.Distance(transform.position, point);
+            Vector3 currentPoint = Vector3.Lerp(transform.position, point, grappleProgress);
+
+            // Update the grapple line's start and end points
+            grappleLine.SetPosition(0, gunSpawnPoint.position);
+            grappleLine.SetPosition(1, currentPoint);
+
+            yield return null;
+        }
+
+        // Move the player to the final point
+        while (Vector3.Distance(transform.position, point) > 1f)
+        {
+            grappleLine.SetPosition(0, gunSpawnPoint.position);
+            transform.position = Vector3.MoveTowards(transform.position, point, grappleSpeed * Time.deltaTime);
+            yield return null;
+        }
+
+        isGrappling = false; // Stop grappling
+        grappleLine.enabled = false; // Disable the line
     }
 
     public void Shoot()

@@ -4,6 +4,7 @@ public class Bullet : MonoBehaviour
 {
     public string ownerId; // The ID of the player who owns this bullet
     private NetworkManager networkManager;
+    public int damage = 20; // Damage dealt by the bullet
 
     private void Start()
     {
@@ -26,11 +27,14 @@ public class Bullet : MonoBehaviour
                 {
                     // Local player's bullet hit another player
                     Debug.Log($"[Local] Bullet from {ownerId} hit player {targetPlayerId}");
+                    string hitMessage = $"hit|{ownerId}|{targetPlayerId}";
+                    networkManager.SendMessage(hitMessage);
                 }
                 else if (targetPlayerId == networkManager.websocket.GetHashCode().ToString())
                 {
                     // Another player's bullet hit the local player
                     Debug.Log($"[Local] Bullet from {ownerId} hit YOU (player {targetPlayerId})");
+                    targetPlayer.TakeDamage(damage);
 
                     // Notify the original shooter
                     string hitMessage = $"hit|{ownerId}|{targetPlayerId}";

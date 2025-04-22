@@ -15,35 +15,56 @@ public class NetworkManager : MonoBehaviour
     public TMP_InputField usernameInputField; // Drag the UsernameInput field here in the Inspector
     public GameObject pauseMenu; // Drag the Canvas or Pause Menu GameObject here
 
+    // Local player reference
+    public GameObject localPlayer; // Drag the local player object here in the Inspector
+    private Player localPlayerScript; // Reference to the Player script of the local player
+
+    public int localPlayerHealth = 100; // Local player health
+
+    public GameObject deathUI; // Drag the Death UI GameObject here in the Inspector
+    public GameObject healthUI; // Drag the Death UI GameObject here in the Inspector
+
+    public TextMeshProUGUI RespawnTxt; // Reference to the TextMeshProUGUI component for respawn countdown
+    public TextMeshProUGUI healthTxt; 
+
+    public string lastAttackerId; // ID of the last player who attacked the local player
+
+    public GameObject scrollViewContent; // Reference to the ScrollView content panel
+    public GameObject playerNameTextPrefab; // Prefab for displaying player names in the ScrollView
+    public GameObject menuUI;
+    public static bool isMenuOpen = false;
+    public bool menuInstantiated = false;
+    public string playersMessage;
+    public bool playersHandled = false;
+
+
+
+    
+
     async void Start()
     {
+        DontDestroyOnLoad(gameObject);
         Debug.Log("Initializing WebSocket connection...");
         websocket = new WebSocket("wss://ws.814850.xyz");
 
         websocket.OnOpen += () =>
         {
             Debug.Log("WebSocket connection opened.");
-            string playerId = websocket.GetHashCode().ToString();
-            string spawnMessage = $"spawn|{playerId}|{playerName}|{transform.position.x}|{transform.position.y}|{transform.position.z}|{transform.rotation.eulerAngles.x}|{transform.rotation.eulerAngles.y}|{transform.rotation.eulerAngles.z}";
-            SendMessage(spawnMessage);
-
-            // Assign the playerId to the local player
-            GameObject localPlayer = Instantiate(playerPrefab, transform.position, transform.rotation);
-            Player localPlayerScript = localPlayer.GetComponent<Player>();
-            if (localPlayerScript != null)
-            {
-                localPlayerScript.Initialize(playerId);
-            }
+            SendHeartbeat();
+            
+        
         };
 
         websocket.OnError += (error) =>
         {
             Debug.LogError($"WebSocket error: {error}");
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
         };
 
         websocket.OnClose += (closeCode) =>
         {
             Debug.LogWarning($"WebSocket connection closed with code: {closeCode}");
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
         };
 
         websocket.OnMessage += (bytes) =>
@@ -64,11 +85,115 @@ public class NetworkManager : MonoBehaviour
         }
     }
 
+    public void OnJoinGameButtonClicked()
+    {
+        string username = usernameInputField.text.Trim();
+
+        if (string.IsNullOrEmpty(username))
+        {
+            Debug.LogWarning("Username cannot be empty.");
+            return;
+        }
+
+        playerName = username; // Update the player's name
+        Debug.Log($"Joining game with username: {playerName}");
+
+        // Switch to the "Game" scene
+        UnityEngine.SceneManagement.SceneManager.LoadScene("Game");
+        Debug.Log($"Scene loading");
+        
+        
+    }
+
+
     void Update()
     {
         #if !UNITY_WEBGL || UNITY_EDITOR
         websocket.DispatchMessageQueue();
         #endif
+
+        // Handle menu toggle
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game") {
+            isMenuOpen = !isMenuOpen;
+            if (!menuInstantiated) {
+                menuUI = Instantiate(menuUI);
+                menuInstantiated = true;
+            }
+            menuUI.SetActive(isMenuOpen);
+            Cursor.lockState = isMenuOpen ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = isMenuOpen;
+        }
+        }
+
+        if (isMenuOpen)
+        {
+            return; // Stop player movement and actions when menu is open
+        }
+
+        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game" )
+            {
+                if (healthUI == null)
+                {
+                    Debug.LogError("Health UI prefab is not assigned.");
+                    return;
+                }
+                
+                
+                if (healthUI == null)
+                {
+                    Debug.LogError("Failed to instantiate Health UI.");
+                    return;
+                }
+
+                
+                if (healthTxt == null)
+                {
+                    Debug.LogError("TextMeshProUGUI component not found in Health UI.");
+                }
+            }
+
+
+
+        if (!playersHandled)
+        {
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game")
+            {
+                
+                healthUI = Instantiate(healthUI);
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                playersHandled = true; // Mark players message as handled
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                string playerId = websocket.GetHashCode().ToString();
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                string spawnMessage = $"spawn|{playerId}|{playerName}|{transform.position.x}|{transform.position.y}|{transform.position.z}|{transform.rotation.eulerAngles.x}|{transform.rotation.eulerAngles.y}|{transform.rotation.eulerAngles.z}";
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                SendMessage(spawnMessage);
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                HandleMessage(playersMessage); // Handle the players message if it was received before the scene loaded
+                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
+                string updateUsernameMessage = $"update_username|{websocket.GetHashCode()}|{playerName}";
+                SendMessage(updateUsernameMessage);
+                
+            }
+        }
+        
+    }
+
+    private async void SendHeartbeat()
+    {
+        while (websocket != null && websocket.State == WebSocketState.Open)
+        {
+            await websocket.SendText("heartbeat");
+            Debug.Log("Heartbeat sent.");
+            await System.Threading.Tasks.Task.Delay(15000); // Send heartbeat every 15 seconds
+        }
+    }
+
+    private void OnEnable()
+    {
+        SendHeartbeat();
     }
 
     public async void SendMessage(string message)
@@ -94,19 +219,23 @@ public class NetworkManager : MonoBehaviour
             return;
         }
 
-        playerName = username; // Update the player's name
-        Debug.Log($"Username set to: {playerName}");
+        Debug.Log($"Username set to: {username}");
 
         // Send the updated username to the server
-        string updateMessage = $"update_username|{websocket.GetHashCode()}|{playerName}";
+        string updateMessage = $"update_username|{websocket.GetHashCode()}|{username}";
         SendMessage(updateMessage);
     }
 
     public void OnResumeButtonClicked()
     {
+        
+        menuUI.SetActive(false); // Hide the menu UI
         pauseMenu.SetActive(false); // Hide the pause menu
         Time.timeScale = 1; // Resume the game
         Debug.Log("Game resumed.");
+        isMenuOpen = false;
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false; // Hide the cursor
     }
 
     public void OnQuitButtonClicked()
@@ -115,19 +244,57 @@ public class NetworkManager : MonoBehaviour
         Application.Quit();
     }
 
+    public List<string> PlayerList = new List<string>();
+
     private void HandleMessage(string message)
     {
-        Debug.Log($"Handling message: {message}");
         string[] parts = message.Split('|');
+        string messageType = parts[0];
+
+        if (messageType == "heartbeat")
+        {
+            Debug.Log("Heartbeat received from server.");
+            return;
+        }
+
+        Debug.Log($"Handling message: {message}");
+
         if (parts.Length < 2)
         {
             Debug.LogError($"Invalid message format: {message}");
             return;
         }
 
-        string messageType = parts[0];
+        if (messageType == "update_username")
+        {
+            if (parts.Length < 3)
+            {
+                Debug.LogError($"Invalid update_username message format: {message}");
+                return;
+            }
 
-        if (messageType == "spawn")
+            string playerId = parts[1];
+            string newUsername = parts[2];
+
+            if (players.ContainsKey(playerId))
+            {
+                GameObject player = players[playerId];
+                Player playerScript = player.GetComponent<Player>();
+                if (playerScript != null)
+                {
+                    playerScript.UpdateUsername(newUsername);
+                }
+                else
+                {
+                    Debug.LogWarning($"Player script not found for player ID {playerId}");
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"Player with ID {playerId} not found for username update.");
+            }
+        }
+        else if (messageType == "spawn")
         {
             if (parts.Length < 9)
             {
@@ -246,6 +413,11 @@ public class NetworkManager : MonoBehaviour
         }
         else if (messageType == "players")
         {
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "Game")
+            {
+                playersMessage = message;
+                return;
+            }
             if (parts.Length < 2)
             {
                 Debug.LogError($"Invalid players message format: {message}");
@@ -271,9 +443,43 @@ public class NetworkManager : MonoBehaviour
                         if (!players.ContainsKey(playerId))
                         {
                             Debug.Log($"Spawning existing player: {playerName} (ID: {playerId})");
+                            PlayerList.Add(playerName);
                             GameObject newPlayer = Instantiate(playerPrefab, position, rotation);
                             newPlayer.name = playerName;
+
+                            // Assign the playerId to the Player script
+                            Player playerScript = newPlayer.GetComponent<Player>();
+                            if (playerScript != null)
+                            {
+                                playerScript.Initialize(playerId);
+                            }
+
+                            // Set the player's name above their head
+                            TextMeshProUGUI nameTag = newPlayer.GetComponentInChildren<TextMeshProUGUI>();
+                            if (nameTag != null)
+                            {
+                                nameTag.text = playerName;
+                            }
+                            else
+                            {
+                                Debug.LogWarning($"Name tag (TextMeshProUGUI) not found for player {playerId}");
+                            }
+
                             players[playerId] = newPlayer;
+                        }
+                        else
+                        {
+                            // Update the position and rotation of existing players
+                            GameObject existingPlayer = players[playerId];
+                            existingPlayer.transform.position = position;
+                            existingPlayer.transform.rotation = rotation;
+
+                            // Ensure the Player script is initialized
+                            Player playerScript = existingPlayer.GetComponent<Player>();
+                            if (playerScript != null && playerScript.playerId != playerId)
+                            {
+                                playerScript.Initialize(playerId);
+                            }
                         }
                     }
                     else
@@ -285,6 +491,27 @@ public class NetworkManager : MonoBehaviour
             else
             {
                 Debug.LogError($"Invalid players message format: {message}");
+            }
+
+            Debug.Log("Current players in the game:");
+            foreach (var kvp in players)
+            {
+                Debug.Log($"Player ID: {kvp.Key}, Player Name: {kvp.Value.name}");
+                // Create a new TextMeshProUGUI object for each player
+                GameObject playerNameText = Instantiate(playerNameTextPrefab, scrollViewContent.transform);
+                TextMeshProUGUI textComponent = playerNameText.GetComponent<TextMeshProUGUI>();
+                if (textComponent != null)
+                {
+                    // Set the player name, color, and font size
+                    textComponent.text = kvp.Value.name;
+                    textComponent.color = Color.white;
+                    textComponent.fontSize = 24;
+                }
+                else
+                {
+                    Debug.LogWarning($"TextMeshProUGUI component not found in prefab for player {kvp.Key}");
+                }
+                
             }
         }
         else if (messageType == "shoot")
@@ -336,26 +563,99 @@ public class NetworkManager : MonoBehaviour
 
             string shooterId = parts[1];
             string targetId = parts[2];
+            int damage = 20; // Default damage value
 
+            // Update local player health if they were hit
+            if (targetId == websocket.GetHashCode().ToString())
+            {
+                Debug.Log($"[Local] You were hit by player {shooterId} for {damage} damage.");
+                lastAttackerId = shooterId;
+                localPlayerHealth -= damage;
+                healthTxt.text = $"{localPlayerHealth}";
+                    if (localPlayerHealth <= 0)
+                    {
+                        onPlayerDied();
+                    }
+                
+            }
+
+            // Update target player's health locally if the local player shot them
             if (shooterId == websocket.GetHashCode().ToString())
             {
-                // Local player shot someone
-                Debug.Log($"[Local] Your bullet hit player {targetId}");
-            }
-            else if (targetId == websocket.GetHashCode().ToString())
-            {
-                // Local player got hit
-                Debug.Log($"[Local] You were hit by player {shooterId}");
-            }
-            else
-            {
-                // Networked hit event
-                Debug.Log($"[Network] Player {shooterId} hit player {targetId}");
+                Debug.Log($"[Local] Your bullet hit player {targetId} for {damage} damage.");
+                
             }
         }
         else
         {
             Debug.LogWarning($"Unknown message type: {messageType}");
+        }
+    }
+
+    // Coroutine to handle countdown and respawn
+    System.Collections.IEnumerator RespawnCountdown()
+            {
+                RespawnTxt = deathUI.GetComponentInChildren<TextMeshProUGUI>();
+                localPlayer = GameObject.Find("LocalPlayer");
+                if (RespawnTxt == null)
+                {
+                    Debug.LogError("RespawnTxt not found in the instantiated Death UI.");
+                    yield break;
+                }
+                int countdown = 5;
+                while (countdown > 0)
+                {
+                    Debug.Log($"Respawning in {countdown}...");
+                    string respawnMessage = $"update|{websocket.GetHashCode()}|500|500|0|0|0|0";
+                    SendMessage(respawnMessage);
+                    RespawnTxt.text = $"Respawning in {countdown} seconds..";
+                    yield return new WaitForSeconds(1);
+                    countdown--;
+                }
+
+                // Disable the death UI screen
+                deathUI.SetActive(false);
+
+                // Teleport the local player to the respawn position
+                localPlayer.transform.position = new Vector3(0, 0, 0);
+                localPlayerHealth = 100; // Reset health
+            }
+
+    public void onPlayerDied()
+    {
+        Debug.Log("Local player has died.");
+        // Notify the server that the local player has died
+        if (!string.IsNullOrEmpty(lastAttackerId))
+        {
+            string deathMessage = $"death|{websocket.GetHashCode()}|{lastAttackerId}";
+            SendMessage(deathMessage);
+        }
+        // Add logic for handling local player death (e.g., respawn, game over screen, etc.)
+        Debug.Log("Respawning local player...");
+        // Example respawn logic (you can customize this)
+        if (localPlayer != null)
+        {
+            // Teleport the local player above the map
+            localPlayer = GameObject.Find("LocalPlayer");
+            localPlayer.transform.position = new Vector3(0, 500, 0);
+            
+
+            // Enable the death UI screen
+            if (deathUI == null)
+            {
+                Debug.LogWarning("Death UI is not assigned. Instantiating a new one.");
+                //deathUI = Instantiate(deathUI);
+            }
+            deathUI.SetActive(true);
+
+            // Start a countdown coroutine
+            StartCoroutine(RespawnCountdown());
+
+            
+        }
+        else
+        {
+            Debug.LogError("Local player object is null.");
         }
     }
 

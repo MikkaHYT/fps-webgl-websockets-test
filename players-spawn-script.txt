@@ -1,0 +1,43 @@
+else if (messageType == "players")
+        {
+            if (parts.Length < 2)
+            {
+                Debug.LogError($"Invalid players message format: {message}");
+                return;
+            }
+
+            if (int.TryParse(parts[1], out int playerCount) && parts.Length >= 2 + playerCount * 8)
+            {
+                for (int i = 0; i < playerCount; i++)
+                {
+                    string playerId = parts[2 + i * 8];
+                    string playerName = parts[3 + i * 8];
+                    if (float.TryParse(parts[4 + i * 8], out float posX) &&
+                        float.TryParse(parts[5 + i * 8], out float posY) &&
+                        float.TryParse(parts[6 + i * 8], out float posZ) &&
+                        float.TryParse(parts[7 + i * 8], out float rotX) &&
+                        float.TryParse(parts[8 + i * 8], out float rotY) &&
+                        float.TryParse(parts[9 + i * 8], out float rotZ))
+                    {
+                        Vector3 position = new Vector3(posX, posY, posZ);
+                        Quaternion rotation = Quaternion.Euler(rotX, rotY, rotZ);
+
+                        if (!players.ContainsKey(playerId))
+                        {
+                            Debug.Log($"Spawning existing player: {playerName} (ID: {playerId})");
+                            GameObject newPlayer = Instantiate(playerPrefab, position, rotation);
+                            newPlayer.name = playerName;
+                            players[playerId] = newPlayer;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError($"Invalid numeric values in players message: {message}");
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogError($"Invalid players message format: {message}");
+            }
+        }
