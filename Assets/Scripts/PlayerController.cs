@@ -290,20 +290,19 @@ public class PlayerController : MonoBehaviour
         if (Physics.Raycast(ray, out RaycastHit hit, 100f)) // Check if the ray hits something
         {
             // Check if the hit object has a PlayerController or similar component
-            PlayerController hitPlayer = hit.collider.GetComponent<PlayerController>();
+            Player hitPlayer = hit.collider.gameObject.GetComponent<Player>();
+            string targetPlayerId = hitPlayer.playerId;
             if (hitPlayer != null)
             {
-                
-            // Send a kill message if the hit results in a kill
-            string killMessage = $"death|{hitPlayer.networkManager.playerId}|{networkManager.playerId}";
-            networkManager.SendMessage(killMessage);
+                // Send a kill message if the hit results in a kill
+                string killMessage = $"death|{hitPlayer.playerId}|{networkManager.playerId}";
+                networkManager.SendMessage(killMessage);
 
-
-            Debug.Log($"Sniper hit player: {hitPlayer.networkManager.playerId}");
+                Debug.Log($"Sniper hit player: {hitPlayer.playerId}");
             }
             else
             {
-            Debug.Log("Sniper shot missed or hit a non-player object.");
+                Debug.Log("Sniper shot missed or hit a non-player object.");
             }
         }
         else
