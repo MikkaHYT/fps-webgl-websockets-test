@@ -569,7 +569,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &854820185
 RectTransform:
   m_ObjectHideFlags: 0
@@ -673,12 +673,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Padding:
-    m_Left: 0
+    m_Left: 93
     m_Right: 0
-    m_Top: 0
+    m_Top: 14
     m_Bottom: 0
   m_ChildAlignment: 0
-  m_Spacing: 0
+  m_Spacing: -12.9
   m_ChildForceExpandWidth: 1
   m_ChildForceExpandHeight: 0
   m_ChildControlWidth: 0
@@ -1129,7 +1129,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1554369669
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1702,12 +1702,13 @@ MonoBehaviour:
   RespawnTxt: {fileID: 0}
   healthTxt: {fileID: 0}
   lastAttackerId: 
-  scrollViewContent: {fileID: 2144675533}
+  scrollViewContent: {fileID: 919600978}
   playerNameTextPrefab: {fileID: 5986559731515188709, guid: 4b46630aec5969c449a33147881b8faa, type: 3}
   menuUI: {fileID: 1202850526}
   menuInstantiated: 0
   playersMessage: 
   playersHandled: 0
+  playerId: 0
   PlayerList: []
 --- !u!4 &2019295495
 Transform:

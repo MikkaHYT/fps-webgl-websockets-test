@@ -26,6 +26,8 @@ public class NetworkManager : MonoBehaviour
 
     public TextMeshProUGUI RespawnTxt; // Reference to the TextMeshProUGUI component for respawn countdown
     public TextMeshProUGUI healthTxt; 
+    public TextMeshProUGUI killerTxt; // Reference to the TextMeshProUGUI component for killer text
+
 
     public string lastAttackerId; // ID of the last player who attacked the local player
 
@@ -36,10 +38,11 @@ public class NetworkManager : MonoBehaviour
     public bool menuInstantiated = false;
     public string playersMessage;
     public bool playersHandled = false;
+    public int playerId;
 
+    private bool isGameSceneLoaded = false; // Tracks if the "Game" scene is loaded
 
-
-    
+    private Queue<string> pendingSpawnMessages = new Queue<string>();
 
     async void Start()
     {
@@ -58,13 +61,22 @@ public class NetworkManager : MonoBehaviour
         websocket.OnError += (error) =>
         {
             Debug.LogError($"WebSocket error: {error}");
-            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Reconnect");
+            // Attempt to reconnect to websocket
+            websocket.Connect();
         };
 
-        websocket.OnClose += (closeCode) =>
+        websocket.OnClose += async (closeCode) =>
         {
             Debug.LogWarning($"WebSocket connection closed with code: {closeCode}");
-            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Reconnect");
+            // Attempt to reconnect
+            Debug.Log("Attempting to reconnect...");
+            await ReconnectWebSocket();
         };
 
         websocket.OnMessage += (bytes) =>
@@ -83,7 +95,110 @@ public class NetworkManager : MonoBehaviour
         {
             Debug.LogError($"Failed to connect WebSocket: {ex.Message}");
         }
+    
+        
     }
+
+    private async System.Threading.Tasks.Task ReconnectWebSocket()
+    {
+        int retryCount = 0;
+        while (retryCount < 5) // Retry up to 5 times
+        {
+            try
+            {
+                await websocket.Connect();
+                if (websocket.State == WebSocketState.Open)
+                {
+                    Debug.Log("WebSocket reconnected successfully.");
+                    return;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Reconnection attempt {retryCount + 1} failed: {ex.Message}");
+            }
+
+            retryCount++;
+            await System.Threading.Tasks.Task.Delay(5000); // Wait 5 seconds before retrying
+        }
+
+        Debug.LogError("Failed to reconnect WebSocket after 5 attempts.");
+    }
+
+    private void HandlePlayersMessage(string[] parts)
+        {
+            if (parts.Length < 2)
+            {
+                Debug.LogError("Invalid players message format.");
+                return;
+            }
+    
+            if (int.TryParse(parts[1], out int playerCount) && parts.Length >= 2 + playerCount * 8)
+            {
+                for (int i = 0; i < playerCount; i++)
+                {
+                    string playerId = parts[2 + i * 8];
+                    string playerName = parts[3 + i * 8];
+    
+                    if (float.TryParse(parts[4 + i * 8], out float posX) &&
+                        float.TryParse(parts[5 + i * 8], out float posY) &&
+                        float.TryParse(parts[6 + i * 8], out float posZ) &&
+                        float.TryParse(parts[7 + i * 8], out float rotX) &&
+                        float.TryParse(parts[8 + i * 8], out float rotY) &&
+                        float.TryParse(parts[9 + i * 8], out float rotZ))
+                    {
+                        Vector3 position = new Vector3(posX, posY, posZ);
+                        Quaternion rotation = Quaternion.Euler(rotX, rotY, rotZ);
+    
+                        if (!players.ContainsKey(playerId))
+                        {
+                            Debug.Log($"Spawning player: {playerName} (ID: {playerId})");
+                            GameObject newPlayer = Instantiate(playerPrefab, position, rotation);
+                            newPlayer.name = playerName;
+    
+                            Player playerScript = newPlayer.GetComponent<Player>();
+                            if (playerScript != null)
+                            {
+                                playerScript.Initialize(playerId);
+                                playerScript.UpdateUsername(playerName); // Update the username immediately
+                            }
+    
+                            TextMeshProUGUI nameTag = newPlayer.GetComponentInChildren<TextMeshProUGUI>();
+                            if (nameTag != null)
+                            {
+                                nameTag.text = playerName;
+                            }
+    
+                            players[playerId] = newPlayer;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError($"Invalid numeric values for player {playerName} in players message.");
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogError("Invalid players message format or insufficient data.");
+            }
+            string spawnMessage = $"spawn|{playerId}|{playerName}|0|0|0|0|0|0";
+            SendMessage(spawnMessage);
+            healthUI = Instantiate(healthUI);
+            healthUI.SetActive(true);
+            healthTxt = healthUI.transform.Find("HealthInt").GetComponent<TextMeshProUGUI>();
+            if (healthTxt != null)
+                {
+                    healthTxt.text = $"{localPlayerHealth}";
+                }
+            else
+                {
+                    Debug.LogError("Failed to find TextMeshProUGUI component in Health UI.");
+                    healthTxt = healthUI.transform.Find("HealthInt").GetComponent<TextMeshProUGUI>();
+                    Debug.LogError("Failed to find TextMeshProUGUI component in Health UI again.");
+                }
+            }
+        
 
     public void OnJoinGameButtonClicked()
     {
@@ -112,6 +227,23 @@ public class NetworkManager : MonoBehaviour
         websocket.DispatchMessageQueue();
         #endif
 
+        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game")
+        {
+            isGameSceneLoaded = true;
+
+            // Process pending spawn messages
+            while (pendingSpawnMessages.Count > 0)
+            {
+                string message = pendingSpawnMessages.Dequeue();
+                string[] parts = message.Split('|');
+                ProcessSpawnMessage(parts);
+            }
+        }
+        else
+        {
+            isGameSceneLoaded = false;
+        }
+
         // Handle menu toggle
         if (Input.GetKeyDown(KeyCode.Escape))
         {
@@ -132,51 +264,18 @@ public class NetworkManager : MonoBehaviour
             return; // Stop player movement and actions when menu is open
         }
 
-        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game" )
-            {
-                if (healthUI == null)
-                {
-                    Debug.LogError("Health UI prefab is not assigned.");
-                    return;
-                }
-                
-                
-                if (healthUI == null)
-                {
-                    Debug.LogError("Failed to instantiate Health UI.");
-                    return;
-                }
-
-                
-                if (healthTxt == null)
-                {
-                    Debug.LogError("TextMeshProUGUI component not found in Health UI.");
-                }
-            }
-
-
-
-        if (!playersHandled)
+        if (!playersHandled && isGameSceneLoaded)
         {
-            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Game")
+            if (!string.IsNullOrEmpty(playersMessage))
             {
-                
-                healthUI = Instantiate(healthUI);
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                playersHandled = true; // Mark players message as handled
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                string playerId = websocket.GetHashCode().ToString();
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                string spawnMessage = $"spawn|{playerId}|{playerName}|{transform.position.x}|{transform.position.y}|{transform.position.z}|{transform.rotation.eulerAngles.x}|{transform.rotation.eulerAngles.y}|{transform.rotation.eulerAngles.z}";
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                SendMessage(spawnMessage);
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                HandleMessage(playersMessage); // Handle the players message if it was received before the scene loaded
-                healthTxt = healthUI.GetComponentInChildren<TextMeshProUGUI>();
-                string updateUsernameMessage = $"update_username|{websocket.GetHashCode()}|{playerName}";
-                SendMessage(updateUsernameMessage);
-                
+                string[] parts = playersMessage.Split('|');
+                if (parts[0] == "players")
+                {
+                    HandlePlayersMessage(parts);
+                }
             }
+
+            playersHandled = true; // Mark players as handled
         }
         
     }
@@ -196,7 +295,7 @@ public class NetworkManager : MonoBehaviour
         SendHeartbeat();
     }
 
-    public async void SendMessage(string message)
+    public async new void SendMessage(string message)
     {
         if (websocket.State == WebSocketState.Open)
         {
@@ -205,7 +304,24 @@ public class NetworkManager : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning("WebSocket is not open. Cannot send message.");
+            try
+            {
+                Debug.LogWarning("WebSocket is not open. Attempting to reconnect...");
+                await websocket.Connect();
+                if (websocket.State == WebSocketState.Open)
+                {
+                    Debug.Log("WebSocket reconnected. Sending message...");
+                    await websocket.SendText(message);
+                }
+                else
+                {
+                    Debug.LogError("Failed to reconnect WebSocket. Cannot send message.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Error while trying to reconnect WebSocket: {ex.Message}");
+            }
         }
     }
 
@@ -222,7 +338,7 @@ public class NetworkManager : MonoBehaviour
         Debug.Log($"Username set to: {username}");
 
         // Send the updated username to the server
-        string updateMessage = $"update_username|{websocket.GetHashCode()}|{username}";
+        string updateMessage = $"update_username|{playerId}|{username}";
         SendMessage(updateMessage);
     }
 
@@ -283,6 +399,18 @@ public class NetworkManager : MonoBehaviour
                 if (playerScript != null)
                 {
                     playerScript.UpdateUsername(newUsername);
+
+                    // Update the name tag above the player's head
+                    TextMeshProUGUI nameTag = player.GetComponentInChildren<TextMeshProUGUI>();
+                    if (nameTag != null)
+                    {
+                        nameTag.text = newUsername;
+                        Debug.Log($"Updated name tag for player {playerId} to {newUsername}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"Name tag (TextMeshProUGUI) not found for player {playerId}");
+                    }
                 }
                 else
                 {
@@ -296,48 +424,16 @@ public class NetworkManager : MonoBehaviour
         }
         else if (messageType == "spawn")
         {
-            if (parts.Length < 9)
+            if (!isGameSceneLoaded)
             {
-                Debug.LogError($"Invalid spawn message format: {message}");
+                // Queue the spawn message if the "Game" scene is not loaded
+                pendingSpawnMessages.Enqueue(message);
+                Debug.Log($"Queued spawn message: {message}");
                 return;
             }
 
-            string playerId = parts[1];
-            string playerName = parts[2];
-            if (float.TryParse(parts[3], out float posX) &&
-                float.TryParse(parts[4], out float posY) &&
-                float.TryParse(parts[5], out float posZ) &&
-                float.TryParse(parts[6], out float rotX) &&
-                float.TryParse(parts[7], out float rotY) &&
-                float.TryParse(parts[8], out float rotZ))
-            {
-                Vector3 position = new Vector3(posX, posY, posZ);
-                Quaternion rotation = Quaternion.Euler(rotX, rotY, rotZ);
-
-                if (!players.ContainsKey(playerId))
-                {
-                    Debug.Log($"Spawning new player: {playerName} (ID: {playerId})");
-                    GameObject newPlayer = Instantiate(playerPrefab, position, rotation);
-                    newPlayer.name = playerName; // Assign the player's name
-
-                    // Assign the playerId to the Player script
-                    Player playerScript = newPlayer.GetComponent<Player>();
-                    if (playerScript != null)
-                    {
-                        playerScript.Initialize(playerId);
-                    }
-
-                    players[playerId] = newPlayer;
-                }
-                else
-                {
-                    Debug.LogWarning($"Player with ID {playerId} already exists.");
-                }
-            }
-            else
-            {
-                Debug.LogError($"Invalid numeric values in spawn message: {message}");
-            }
+            // Process the spawn message
+            ProcessSpawnMessage(parts);
         }
         else if (messageType == "update")
         {
@@ -413,6 +509,35 @@ public class NetworkManager : MonoBehaviour
         }
         else if (messageType == "players")
         {
+                                 if (int.TryParse(parts[1], out int playerCount) && parts.Length >= 2 + playerCount * 8)
+            {
+                Debug.Log($"Number of players in the game: {playerCount}");
+                for (int i = 0; i < playerCount; i++)
+                {
+                    string playerName = parts[3 + i * 8];
+                    Debug.Log($"Player {i + 1}: {playerName}");
+
+                    // Create a new TextMeshProUGUI object for each player
+                    GameObject playerNameText = Instantiate(playerNameTextPrefab, scrollViewContent.transform);
+                    TextMeshProUGUI textComponent = playerNameText.GetComponent<TextMeshProUGUI>();
+                    if (textComponent != null)
+                    {
+                        // Set the player name, color, and font size
+                        textComponent.text = playerName;
+                        textComponent.color = Color.white;
+                        textComponent.fontSize = 24;
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"TextMeshProUGUI component not found in prefab for player {playerName}");
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogError($"Invalid players message format or insufficient data: {message}");
+            }
+
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "Game")
             {
                 playersMessage = message;
@@ -424,12 +549,11 @@ public class NetworkManager : MonoBehaviour
                 return;
             }
 
-            if (int.TryParse(parts[1], out int playerCount) && parts.Length >= 2 + playerCount * 8)
+            if (int.TryParse(parts[1], out playerCount) && parts.Length >= 2 + playerCount * 8)
             {
                 for (int i = 0; i < playerCount; i++)
                 {
                     string playerId = parts[2 + i * 8];
-                    string playerName = parts[3 + i * 8];
                     if (float.TryParse(parts[4 + i * 8], out float posX) &&
                         float.TryParse(parts[5 + i * 8], out float posY) &&
                         float.TryParse(parts[6 + i * 8], out float posZ) &&
@@ -493,26 +617,7 @@ public class NetworkManager : MonoBehaviour
                 Debug.LogError($"Invalid players message format: {message}");
             }
 
-            Debug.Log("Current players in the game:");
-            foreach (var kvp in players)
-            {
-                Debug.Log($"Player ID: {kvp.Key}, Player Name: {kvp.Value.name}");
-                // Create a new TextMeshProUGUI object for each player
-                GameObject playerNameText = Instantiate(playerNameTextPrefab, scrollViewContent.transform);
-                TextMeshProUGUI textComponent = playerNameText.GetComponent<TextMeshProUGUI>();
-                if (textComponent != null)
-                {
-                    // Set the player name, color, and font size
-                    textComponent.text = kvp.Value.name;
-                    textComponent.color = Color.white;
-                    textComponent.fontSize = 24;
-                }
-                else
-                {
-                    Debug.LogWarning($"TextMeshProUGUI component not found in prefab for player {kvp.Key}");
-                }
-                
-            }
+            
         }
         else if (messageType == "shoot")
         {
@@ -522,22 +627,22 @@ public class NetworkManager : MonoBehaviour
                 return;
             }
 
-            string playerId = parts[1];
-            if (float.TryParse(parts[2], out float posX) &&
-                float.TryParse(parts[3], out float posY) &&
-                float.TryParse(parts[4], out float posZ) &&
-                float.TryParse(parts[5], out float rotX) &&
-                float.TryParse(parts[6], out float rotY) &&
-                float.TryParse(parts[7], out float rotZ) &&
-                float.TryParse(parts[8], out float rotW))
+            string gunType = parts[1];
+            string playerId = parts[2];
+            if (float.TryParse(parts[3], out float posX) &&
+                float.TryParse(parts[4], out float posY) &&
+                float.TryParse(parts[5], out float posZ) &&
+                float.TryParse(parts[6], out float dirX) &&
+                float.TryParse(parts[7], out float dirY) &&
+                float.TryParse(parts[8], out float dirZ))
             {
                 Vector3 position = new Vector3(posX, posY, posZ);
-                Quaternion rotation = new Quaternion(rotX, rotY, rotZ, rotW);
+                Vector3 direction = new Vector3(dirX, dirY, dirZ).normalized;
 
                 // Instantiate the bullet locally
-                GameObject bullet = Instantiate(playerPrefab.GetComponent<PlayerController>().gunPrefab, position, rotation);
+                GameObject bullet = Instantiate(playerPrefab.GetComponent<PlayerController>().gunPrefab, position, Quaternion.LookRotation(direction));
                 Rigidbody rb = bullet.GetComponent<Rigidbody>();
-                rb.AddForce(rotation * Vector3.forward * 20f, ForceMode.Impulse);
+                rb.AddForce(direction * 20f, ForceMode.Impulse);
 
                 // Assign the owner ID to the bullet
                 Bullet bulletScript = bullet.GetComponent<Bullet>();
@@ -546,7 +651,7 @@ public class NetworkManager : MonoBehaviour
                 // Destroy the bullet after 5 seconds
                 Destroy(bullet, 5f);
 
-                Debug.Log($"Bullet spawned for player {playerId} at position {position} with rotation {rotation}");
+                Debug.Log($"Bullet spawned for player {playerId} at position {position} with direction {direction}");
             }
             else
             {
@@ -566,7 +671,7 @@ public class NetworkManager : MonoBehaviour
             int damage = 20; // Default damage value
 
             // Update local player health if they were hit
-            if (targetId == websocket.GetHashCode().ToString())
+            if (targetId == playerId.ToString())
             {
                 Debug.Log($"[Local] You were hit by player {shooterId} for {damage} damage.");
                 lastAttackerId = shooterId;
@@ -580,10 +685,42 @@ public class NetworkManager : MonoBehaviour
             }
 
             // Update target player's health locally if the local player shot them
-            if (shooterId == websocket.GetHashCode().ToString())
+            if (shooterId == playerId.ToString())
             {
                 Debug.Log($"[Local] Your bullet hit player {targetId} for {damage} damage.");
                 
+            }
+        } else if (messageType == "playerId")
+        {
+            if (parts.Length < 2)
+            {
+                Debug.LogError($"Invalid playerId message format: {message}");
+                return;
+            }
+
+            string playerId = parts[1];
+            this.playerId = int.Parse(playerId);
+            Debug.Log($"Player ID set to: {this.playerId}");
+        } 
+        else if (messageType == "death")
+        {
+            if (parts.Length < 3)
+            {
+                Debug.LogError($"Invalid death message format: {message}");
+                return;
+            }
+
+            string playerId = parts[1];
+            string attackerId = parts[2];
+
+            if (players.ContainsKey(playerId))
+            {
+                Debug.Log($"Player {playerId} has died. Attacker ID: {attackerId}");
+                
+            }
+            else
+            {
+                Debug.LogWarning($"Player ID {playerId} not found for death event.");
             }
         }
         else
@@ -596,17 +733,44 @@ public class NetworkManager : MonoBehaviour
     System.Collections.IEnumerator RespawnCountdown()
             {
                 RespawnTxt = deathUI.GetComponentInChildren<TextMeshProUGUI>();
+                killerTxt = deathUI.transform.Find("killerTxt").GetComponent<TextMeshProUGUI>();
                 localPlayer = GameObject.Find("LocalPlayer");
                 if (RespawnTxt == null)
                 {
                     Debug.LogError("RespawnTxt not found in the instantiated Death UI.");
                     yield break;
                 }
+            if (killerTxt != null)
+            {
+                if (players.ContainsKey(lastAttackerId))
+                {
+                    GameObject attacker = players[lastAttackerId];
+                    Player attackerScript = attacker.GetComponent<Player>();
+                    if (attackerScript != null)
+                    {
+                        killerTxt.text = $"Killed by {attacker.name}";
+                    }
+                    else
+                    {
+                        killerTxt.text = "Killed by Unknown";
+                        Debug.LogError("Failed to find Player script for the attacker.");
+                    }
+                }
+                else
+                {
+                    killerTxt.text = "Killed by Unknown";
+                    Debug.LogWarning("Attacker not found in players dictionary.");
+                }
+            }
+            else
+            {
+                Debug.LogError("Failed to find TextMeshProUGUI component for KillerTxt in Death UI.");
+            } 
                 int countdown = 5;
                 while (countdown > 0)
                 {
                     Debug.Log($"Respawning in {countdown}...");
-                    string respawnMessage = $"update|{websocket.GetHashCode()}|500|500|0|0|0|0";
+                    string respawnMessage = $"update|{playerId}|500|500|0|0|0|0";
                     SendMessage(respawnMessage);
                     RespawnTxt.text = $"Respawning in {countdown} seconds..";
                     yield return new WaitForSeconds(1);
@@ -616,9 +780,26 @@ public class NetworkManager : MonoBehaviour
                 // Disable the death UI screen
                 deathUI.SetActive(false);
 
-                // Teleport the local player to the respawn position
-                localPlayer.transform.position = new Vector3(0, 0, 0);
+                // Teleport the local player to a random respawn position
+                int randomPosition = Random.Range(1, 5);
+                switch (randomPosition)
+                {
+                    case 1:
+                        localPlayer.transform.position = new Vector3(-38.4f, 4.12f, 18.91f);
+                        break;
+                    case 2:
+                        localPlayer.transform.position = new Vector3(-15.36f, 3.72f, -30.46f);
+                        break;
+                    case 3:
+                        localPlayer.transform.position = new Vector3(0, 0, 00);
+                        break;
+                    case 4:
+                        localPlayer.transform.position = new Vector3(-8.4f, 3.59f, -8.44f);
+                        break;
+                }
                 localPlayerHealth = 100; // Reset health
+                healthTxt.text = $"{localPlayerHealth}";
+                Debug.Log("Local player respawned.");
             }
 
     public void onPlayerDied()
@@ -627,8 +808,9 @@ public class NetworkManager : MonoBehaviour
         // Notify the server that the local player has died
         if (!string.IsNullOrEmpty(lastAttackerId))
         {
-            string deathMessage = $"death|{websocket.GetHashCode()}|{lastAttackerId}";
+            string deathMessage = $"death|{playerId}|{lastAttackerId}";
             SendMessage(deathMessage);
+            
         }
         // Add logic for handling local player death (e.g., respawn, game over screen, etc.)
         Debug.Log("Respawning local player...");
@@ -664,5 +846,64 @@ public class NetworkManager : MonoBehaviour
         Debug.Log("Closing WebSocket connection...");
         await websocket.Close();
         Debug.Log("WebSocket connection closed.");
+    }
+
+    private void ProcessSpawnMessage(string[] parts)
+    {
+        if (parts.Length < 9)
+        {
+            Debug.LogError($"Invalid spawn message format.");
+            return;
+        }
+
+        string playerId = parts[1];
+        string playerName = parts[2];
+        if (float.TryParse(parts[3], out float posX) &&
+            float.TryParse(parts[4], out float posY) &&
+            float.TryParse(parts[5], out float posZ) &&
+            float.TryParse(parts[6], out float rotX) &&
+            float.TryParse(parts[7], out float rotY) &&
+            float.TryParse(parts[8], out float rotZ))
+        {
+            Vector3 position = new Vector3(posX, posY, posZ);
+            Quaternion rotation = Quaternion.Euler(rotX, rotY, rotZ);
+
+            if (!players.ContainsKey(playerId))
+            {
+                Debug.Log($"Spawning new player: {playerName} (ID: {playerId})");
+                GameObject newPlayer = Instantiate(playerPrefab, position, rotation);
+                newPlayer.name = playerName;
+
+                // Assign the playerId to the Player script
+                Player playerScript = newPlayer.GetComponent<Player>();
+                if (playerScript != null)
+                {
+                    playerScript.Initialize(playerId);
+                    playerScript.UpdateUsername(playerName); // Update the username immediately
+                }
+
+                // Set the player's name above their head
+                TextMeshProUGUI nameTag = newPlayer.GetComponentInChildren<TextMeshProUGUI>();
+                if (nameTag != null)
+                {
+                    nameTag.text = playerName;
+                    Debug.Log($"Set name tag for player {playerId} to {playerName}");
+                }
+                else
+                {
+                    Debug.LogWarning($"Name tag (TextMeshProUGUI) not found for player {playerId}");
+                }
+
+                players[playerId] = newPlayer;
+            }
+            else
+            {
+                Debug.LogWarning($"Player with ID {playerId} already exists.");
+            }
+        }
+        else
+        {
+            Debug.LogError($"Invalid numeric values in spawn message.");
+        }
     }
 }

@@ -9,46 +9,73 @@ public class Bullet : MonoBehaviour
     private void Start()
     {
         // Find the NetworkManager in the scene
-        networkManager = FindObjectOfType<NetworkManager>();
+        networkManager = FindFirstObjectByType<NetworkManager>();
     }
 
     private void OnCollisionEnter(Collision collision)
     {
-        // Check if the bullet hit a player
-        if (collision.gameObject.CompareTag("Player"))
+        try
         {
             // Get the Player component from the collided GameObject
             Player targetPlayer = collision.gameObject.GetComponent<Player>();
-            if (targetPlayer != null)
+            // Check if the bullet hit a player
+            if (collision.gameObject.CompareTag("Player"))
             {
-                string targetPlayerId = targetPlayer.playerId;
-
-                if (ownerId == networkManager.websocket.GetHashCode().ToString())
+                if (targetPlayer.playerId == ownerId)
                 {
-                    // Local player's bullet hit another player
-                    Debug.Log($"[Local] Bullet from {ownerId} hit player {targetPlayerId}");
-                    string hitMessage = $"hit|{ownerId}|{targetPlayerId}";
-                    networkManager.SendMessage(hitMessage);
+                    // Bullet hit the player who shot it, do nothing
+                    return;
                 }
-                else if (targetPlayerId == networkManager.websocket.GetHashCode().ToString())
+                if (targetPlayer != null)
                 {
-                    // Another player's bullet hit the local player
-                    Debug.Log($"[Local] Bullet from {ownerId} hit YOU (player {targetPlayerId})");
-                    targetPlayer.TakeDamage(damage);
+                    string targetPlayerId = targetPlayer.playerId;
+                    Debug.Log("Your ID: " + networkManager.playerId.ToString());
+                    Debug.Log("Bullet hit: " + targetPlayerId);
 
-                    // Notify the original shooter
-                    string hitMessage = $"hit|{ownerId}|{targetPlayerId}";
-                    networkManager.SendMessage(hitMessage);
+                    if (ownerId == networkManager.playerId.ToString())
+                    {
+                        // Local player's bullet hit another player
+                        Debug.Log($"[Local] Bullet from {ownerId} hit player {targetPlayerId}");
+                        string hitMessage = $"hit|{ownerId}|{targetPlayerId}";
+                        networkManager.SendMessage(hitMessage);
+                    }
+                    else if (targetPlayerId == networkManager.playerId.ToString())
+                    {
+                        // Another player's bullet hit the local player
+                        Debug.Log($"[Local] Bullet from {ownerId} hit YOU (player {targetPlayerId})");
+                        targetPlayer.TakeDamage(damage);
+
+                        // Notify the original shooter
+                        string hitMessage = $"hit|{ownerId}|{targetPlayerId}";
+                        networkManager.SendMessage(hitMessage);
+                    }
+                    else
+                    {
+                        // Another player's bullet hit another player
+                        Debug.Log($"[Network] Bullet from {ownerId} hit player {targetPlayerId}");
+                    }
                 }
                 else
                 {
-                    // Another player's bullet hit another player
-                    Debug.Log($"[Network] Bullet from {ownerId} hit player {targetPlayerId}");
+                    // Assume the collided object is the local player with no player script, handle accordingly
+                    Debug.LogWarning($"Bullet hit an object without a Player component: {collision.gameObject.name}, assuming it is the local player object.");
                 }
             }
-        }
+            Debug.Log("Bullet collided with: " + collision.gameObject.name);
+            Debug.Log("Bullet owner ID: " + ownerId);
+            Debug.Log("Target player ID: " + targetPlayer?.playerId);
 
-        // Destroy the bullet on collision
-        Destroy(gameObject);
+            if (targetPlayer?.playerId != ownerId)
+            {
+                // Destroy the bullet on collision
+                Destroy(gameObject);
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Error processing bullet collision: {ex.Message}");
+            // Destroy the bullet even if an error occurs
+            Destroy(gameObject);
+        }
     }
 }
